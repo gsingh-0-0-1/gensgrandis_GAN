@@ -13,7 +13,7 @@ from scipy.ndimage.filters import gaussian_filter
 
 from IPython import display
 
-INIT_LR = 1e-3
+INIT_LR = 2e-5
 NOISE_DIM = 1
 
 def contrast_filter(img, b, c, offset):
@@ -22,20 +22,21 @@ def contrast_filter(img, b, c, offset):
 
 def make_generator_model():
 	model = tf.keras.Sequential()
-	model.add(layers.Dense(int(TARGET_IMAGE_SIDELENGTH / 2)**2 * 32, use_bias=False, input_shape=(NOISE_DIM,), activation='linear'))
+	model.add(layers.Dense(int(TARGET_IMAGE_SIDELENGTH / 4)**2 * 32, use_bias=False, input_shape=(NOISE_DIM,), activation='linear'))
+	#model.add(layers.BatchNormalization())
+	#model.add(layers.LeakyReLU())
+
+	model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 4), int(TARGET_IMAGE_SIDELENGTH / 4), 32)))
+
+	model.add(layers.Conv2DTranspose(64, (int(TARGET_IMAGE_SIDELENGTH / 8), int(TARGET_IMAGE_SIDELENGTH / 8)), strides=(2, 2), padding='same', use_bias=False, activation='sigmoid'))
 	model.add(layers.BatchNormalization())
 	model.add(layers.LeakyReLU())
 
-	#model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 4), int(TARGET_IMAGE_SIDELENGTH / 4), 32)))
+	model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 64)))
 
-	#model.add(layers.Conv2DTranspose(32, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='sigmoid'))
-	model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 32)))
-	assert model.output_shape == (None, int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 32)
+	model.add(layers.Conv2DTranspose(3, (int(TARGET_IMAGE_SIDELENGTH / 6), int(TARGET_IMAGE_SIDELENGTH / 6)), strides=(2, 2), padding='same', use_bias=False, activation='linear'))
 	model.add(layers.BatchNormalization())
-	model.add(layers.LeakyReLU())
-
-	model.add(layers.Conv2DTranspose(3, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='linear'))
-
+	#model.add(layers.LeakyReLU())
 	#model.add(layers.Flatten())
 
 	#model.add(layers.Dense(TARGET_IMAGE_SIDELENGTH * TARGET_IMAGE_SIDELENGTH * 3, activation='linear'))
@@ -61,15 +62,15 @@ def get_generator_output(inp):
 
 
 def make_discriminator_model():
-	model = tf.keras.Sequential([
+	'''model = tf.keras.Sequential([
 		layers.Input(shape=(TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)),
 		layers.Flatten(),
-		#layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='linear'),
+		layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 8) ** 2) * 3, activation='linear'),
 		#layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 8) ** 2) * 3, activation='linear'),
 		#layers.Dense(5, activation='linear'),
 		layers.Dense(1, activation='linear'),
-	])
-	'''model = tf.keras.Sequential()
+	])'''
+	model = tf.keras.Sequential()
 	model.add(layers.Input(shape=(TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)))
 
 	model.add(layers.Conv2D(64, (10, 10), strides=(2, 2), padding='same'))
@@ -77,17 +78,15 @@ def make_discriminator_model():
 	model.add(layers.LeakyReLU())
 	#model.add(layers.Dropout(0.2))
 
-	model.add(layers.Conv2D(1, (2, 2), strides=(2, 2)))
-	assert model.output_shape == (None, int(TARGET_IMAGE_SIDELENGTH / 4), int(TARGET_IMAGE_SIDELENGTH / 4), 1)
+	model.add(layers.Conv2D(32, (2, 2), strides=(2, 2)))
 	model.add(layers.LeakyReLU())
 
-	model.add(layers.Conv2D(32, (2, 2), strides=(2, 2)))
-	assert model.output_shape == (None, int(TARGET_IMAGE_SIDELENGTH / 8), int(TARGET_IMAGE_SIDELENGTH / 8), 32)
+	model.add(layers.Conv2D(16, (2, 2), strides=(2, 2)))
 	model.add(layers.LeakyReLU())
 
 	model.add(layers.Flatten())
-	model.add(layers.Dense(100, activation='sigmoid'))
-	model.add(layers.Dense(1, activation='linear'))'''
+	model.add(layers.Dense(50, activation='linear'))
+	model.add(layers.Dense(1, activation='linear'))
 	return model
 
 TARGET_IMAGE_SIDELENGTH = 40
@@ -101,7 +100,7 @@ train_images = np.array(train_images)
 train_images = train_images.reshape(train_images.shape[0], TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)
 train_images = (train_images / 255)
 
-train_images = train_images[:5]
+train_images = train_images#[:10]
 
 print(np.amax(train_images))
 BUFFER_SIZE = 60000
@@ -118,7 +117,7 @@ discriminator_optimizer = tf.keras.optimizers.Adam(INIT_LR)
 def generate_seed(shape = (1, NOISE_DIM)):
 	return np.random.random(shape) * 10
 
-EPOCHS = int(3e3)
+EPOCHS = int(3e4)
 num_examples_to_generate = 4
 ROW = 2
 COL = 2
@@ -200,9 +199,7 @@ def generate_and_save_images(model, epoch, test_input):
 
 	for i in range(predictions.shape[0]):
 		plt.subplot(ROW, COL, i + 1)
-		arr = train_images[epoch % train_images.shape[0]]
-		if i != 0:
-			arr = np.array(predictions[i])
+		arr = np.array(predictions[i])
 		#arr = arr - np.amin(arr)
 		arr *= 255 / (np.amax(arr))
 		arr = np.array(np.around(arr), dtype=int)
@@ -248,7 +245,7 @@ def train(dataset, epochs):
 		                       epoch + 1,
 		                       seed)
 
-		if (epoch + 1) % 1 == -1:
+		if (epoch + 1) % 5 == 0:
 			generator.save('gg_map_generator')
 			discriminator.save('gg_map_discriminator')
 
