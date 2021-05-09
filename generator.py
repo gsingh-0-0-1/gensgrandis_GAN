@@ -13,8 +13,8 @@ from scipy.ndimage.filters import gaussian_filter
 
 from IPython import display
 
-INIT_LR = 1e-4
-NOISE_DIM = 50
+INIT_LR = 1e-3
+NOISE_DIM = 1
 
 def contrast_filter(img, b, c, offset):
 	img = c / (1 + b ** ( -(img + offset) ) )
@@ -22,27 +22,31 @@ def contrast_filter(img, b, c, offset):
 
 def make_generator_model():
 	model = tf.keras.Sequential()
-	model.add(layers.Dense(int(TARGET_IMAGE_SIDELENGTH /4)**2 * 256, use_bias=False, input_shape=(NOISE_DIM,), activation='sigmoid'))
+	model.add(layers.Dense(int(TARGET_IMAGE_SIDELENGTH / 2)**2 * 32, use_bias=False, input_shape=(NOISE_DIM,), activation='linear'))
 	model.add(layers.BatchNormalization())
 	model.add(layers.LeakyReLU())
 
-	model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 4), int(TARGET_IMAGE_SIDELENGTH / 4), 256)))
+	#model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 4), int(TARGET_IMAGE_SIDELENGTH / 4), 32)))
 
-	model.add(layers.Conv2DTranspose(128, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='sigmoid'))
-	assert model.output_shape == (None, int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 128)
+	#model.add(layers.Conv2DTranspose(32, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='sigmoid'))
+	model.add(layers.Reshape((int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 32)))
+	assert model.output_shape == (None, int(TARGET_IMAGE_SIDELENGTH / 2), int(TARGET_IMAGE_SIDELENGTH / 2), 32)
 	model.add(layers.BatchNormalization())
 	model.add(layers.LeakyReLU())
 
 	model.add(layers.Conv2DTranspose(3, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='linear'))
+
+	#model.add(layers.Flatten())
+
+	#model.add(layers.Dense(TARGET_IMAGE_SIDELENGTH * TARGET_IMAGE_SIDELENGTH * 3, activation='linear'))
+	#model.add(layers.Reshape((TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)))
 	assert model.output_shape == (None, TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)
 	#model.add(layers.BatchNormalization())
 	#model.add(layers.LeakyReLU())
 
 	'''model = tf.keras.Sequential([
 		layers.Input(shape=(NOISE_DIM,)),
-		layers.Dense(1, activation='linear'),
-		layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='sigmoid'),
-		layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='sigmoid'),
+		layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='linear'),
 		layers.Dense((TARGET_IMAGE_SIDELENGTH ** 2) * 3, activation='linear'),
 		layers.Reshape((TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)),
 	])'''
@@ -60,9 +64,10 @@ def make_discriminator_model():
 	model = tf.keras.Sequential([
 		layers.Input(shape=(TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)),
 		layers.Flatten(),
-		#layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='sigmoid'),
-		layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='linear'),
-		layers.Dense(1, activation='linear')
+		#layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 4) ** 2) * 3, activation='linear'),
+		#layers.Dense(int((TARGET_IMAGE_SIDELENGTH / 8) ** 2) * 3, activation='linear'),
+		#layers.Dense(5, activation='linear'),
+		layers.Dense(1, activation='linear'),
 	])
 	'''model = tf.keras.Sequential()
 	model.add(layers.Input(shape=(TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)))
@@ -96,11 +101,11 @@ train_images = np.array(train_images)
 train_images = train_images.reshape(train_images.shape[0], TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3)
 train_images = (train_images / 255)
 
-train_images = train_images
+train_images = train_images[:5]
 
 print(np.amax(train_images))
 BUFFER_SIZE = 60000
-BATCH_SIZE = 5
+BATCH_SIZE = 1
 
 train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
@@ -113,7 +118,7 @@ discriminator_optimizer = tf.keras.optimizers.Adam(INIT_LR)
 def generate_seed(shape = (1, NOISE_DIM)):
 	return np.random.random(shape) * 10
 
-EPOCHS = int(1e10)
+EPOCHS = int(3e3)
 num_examples_to_generate = 4
 ROW = 2
 COL = 2
@@ -141,12 +146,37 @@ def train_step(images):
 		gen_loss = generator_loss(fake_output)
 		disc_loss = discriminator_loss(real_output, fake_output)
 
-	print("\t\tLOSS: ", np.around(np.array(gen_loss), 5), '\t', np.around(np.array(disc_loss), 5))
+
+	g_loss = np.array(gen_loss)
+	d_loss = np.array(disc_loss)
+	print("\t\tLOSS: ", np.around(g_loss, 5), '\t', np.around(d_loss, 5))
+
+	generator_optimizer.learning_rate = INIT_LR
+	discriminator_optimizer.learning_rate = INIT_LR
+
+
+	#prevent training if one is too far ahead of the other
+	calc_g = True
+	calc_d = True
+
+	factor = 2
+
+	'''discriminator_optimizer.learning_rate = discriminator_optimizer.learning_rate + (INIT_LR - discriminator_optimizer.learning_rate)/2
+	generator_optimizer.learning_rate = generator_optimizer.learning_rate + (INIT_LR - generator_optimizer.learning_rate)/2
+
+	if abs(g_loss - d_loss) > 2:
+		if g_loss > d_loss:
+			discriminator_optimizer.learning_rate = discriminator_optimizer.learning_rate / factor
+			generator_optimizer.learning_rate = generator_optimizer.learning_rate * factor
+		if d_loss > g_loss:
+			generator_optimizer.learning_rate = generator_optimizer.learning_rate / factor
+			discriminator_optimizer.learning_rate = discriminator_optimizer.learning_rate * factor
+'''
 
 	gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
-	gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
-
 	generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+
+	gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
 	discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
 generator = make_generator_model()
@@ -170,16 +200,19 @@ def generate_and_save_images(model, epoch, test_input):
 
 	for i in range(predictions.shape[0]):
 		plt.subplot(ROW, COL, i + 1)
-		arr = np.array(predictions[i])
+		arr = train_images[epoch % train_images.shape[0]]
+		if i != 0:
+			arr = np.array(predictions[i])
 		#arr = arr - np.amin(arr)
-		#arr *= 255 / (np.amax(arr))
-		arr = np.around(arr)
+		arr *= 255 / (np.amax(arr))
+		arr = np.array(np.around(arr), dtype=int)
 		arr[np.where(arr < 0)] = 0
 		print(np.amax(arr), np.amin(arr))
+
 		plt.imshow(arr)
 		plt.axis('off')
 
-	plt.savefig('epoch_{:04d}_raw.png'.format(epoch))
+	plt.savefig('gen_imgs/epoch_{:04d}_raw.png'.format(epoch))
 	#plt.pause(0.001)
 	#plt.show()
 
@@ -194,7 +227,7 @@ def train(dataset, epochs):
 
 		batchnum = 1
 		for image_batch in dataset:
-			print("\tStarting batch", batchnum, "of epoch", epoch)
+			print("\tStarting batch", batchnum, "of epoch", epoch, end=' ')
 			train_step(image_batch)
 			batchnum += 1
 
@@ -215,7 +248,7 @@ def train(dataset, epochs):
 		                       epoch + 1,
 		                       seed)
 
-		if (epoch + 1) % 10 == 0:
+		if (epoch + 1) % 1 == -1:
 			generator.save('gg_map_generator')
 			discriminator.save('gg_map_discriminator')
 
