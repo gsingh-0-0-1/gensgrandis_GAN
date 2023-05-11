@@ -132,14 +132,14 @@ noise = np.random.random(size = selected_train_dataset.shape)
 add_noise = (noise - one) * noise_add_frac(1 / N_STEPS)
 
 for jump in range(N_STEPS):
-two = one + add_noise
-
-flat_2 = two.reshape(flat_shape)
-
-images.append(flat_2)
-noises.append(add_noise.reshape(flat_shape))
-
-one = two
+  two = one + add_noise
+  
+  flat_2 = two.reshape(flat_shape)
+  
+  images.append(flat_2)
+  noises.append(add_noise.reshape(flat_shape))
+  
+  one = two
 
 images = np.concatenate(tuple(images), axis = 0)
 noises = np.concatenate(tuple(noises), axis = 0)
