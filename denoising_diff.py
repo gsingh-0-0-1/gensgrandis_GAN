@@ -135,12 +135,21 @@ add_noise = (noise - one) * noise_add_frac(1 / N_STEPS)
 
 for jump in range(N_STEPS):
   two = one + add_noise
+<<<<<<< HEAD
 
   flat_2 = two.reshape(flat_shape)
 
   images.append(flat_2)
   noises.append(add_noise.reshape(flat_shape))
 
+=======
+  
+  flat_2 = two.reshape(flat_shape)
+  
+  images.append(flat_2)
+  noises.append(add_noise.reshape(flat_shape))
+  
+>>>>>>> 11de27d82f96341510aac94e43589e3637042c21
   one = two
 
 images = np.concatenate(tuple(images), axis = 0)
