@@ -14,8 +14,9 @@ import random
 import atexit
 import math
 
+print(tf.__version__)
 
-
+print("Devices: ", [el for el in tf.config.list_physical_devices()])
 
 INIT_LR = 1e-4
 NOISE_DIM = 300
@@ -60,7 +61,7 @@ def load_image_dataset():
 
 
 
-N_STEPS = 100
+N_STEPS = 20
 
 train_dataset = load_image_dataset()
 #train_dataset = add_noise_to_dataset(train_dataset, N_STEPS)
@@ -92,8 +93,9 @@ res_025_conv_2 = tf.keras.layers.Conv2D(256, 3, strides = 1, padding = 'same')(r
 res_025_conv_3 = tf.keras.layers.Conv2D(512, 3, strides = 1, padding = 'same')(res_025_conv_2)
 res_025_conv_4 = tf.keras.layers.Conv2D(512, 3, strides = 1, padding = 'same')(res_025_conv_3)
 res_025_conv_5 = tf.keras.layers.Conv2D(256, 3, strides = 1, padding = 'same')(res_025_conv_4)
+res_025_conv_6 = tf.keras.layers.Conv2D(256, 3, strides = 1, padding = 'same')(res_025_conv_5)
 
-upsamp_025_05 = tf.keras.layers.UpSampling2D(size = (2, 2))(res_025_conv_3)
+upsamp_025_05 = tf.keras.layers.UpSampling2D(size = (2, 2))(res_025_conv_6)
 concat_res_05 = tf.keras.layers.Concatenate(axis = -1)([upsamp_025_05, res_05_conv_1])
 res_05_conv_2 = tf.keras.layers.Conv2D(256, 3, strides = 1, padding = 'same')(concat_res_05)
 res_05_conv_3 = tf.keras.layers.Conv2D(128, 3, strides = 1, padding = 'same')(res_05_conv_2)
@@ -119,7 +121,7 @@ def noise_add_frac(frac):
 
 atexit.register(model.save, "/content/drive/My Drive/GG_train_data/saved_model")
 
-selected_train_dataset = train_dataset[:1000]
+selected_train_dataset = train_dataset[:5000]
 noisy = selected_train_dataset
 one = noisy
 
@@ -132,14 +134,14 @@ noise = np.random.random(size = selected_train_dataset.shape)
 add_noise = (noise - one) * noise_add_frac(1 / N_STEPS)
 
 for jump in range(N_STEPS):
-two = one + add_noise
+  two = one + add_noise
 
-flat_2 = two.reshape(flat_shape)
+  flat_2 = two.reshape(flat_shape)
 
-images.append(flat_2)
-noises.append(add_noise.reshape(flat_shape))
+  images.append(flat_2)
+  noises.append(add_noise.reshape(flat_shape))
 
-one = two
+  one = two
 
 images = np.concatenate(tuple(images), axis = 0)
 noises = np.concatenate(tuple(noises), axis = 0)
@@ -152,7 +154,30 @@ training_frac = 0.7
 
 splitpoint = int(n_total * training_frac)
 
+tf.device('/device:GPU:0')
+
 model.fit(images[:splitpoint], noises[:splitpoint], validation_data = (images[splitpoint:], noises[splitpoint:]),
-      batch_size = 10,
+      batch_size = 5,
       epochs = 10,
-      shuffle = True) 
+      shuffle = True)
+
+def generate_test_images():
+  noise = np.random.random(size = (4, TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3))
+  subtracted = noise
+  for i in range(N_STEPS * 2):
+    plt.clf()
+    plt.suptitle("Step %d of %d" % (i + 1, N_STEPS))
+    pred_noise = model.predict(subtracted.reshape(4, PIXELS_PER_IMG))
+    subtracted = subtracted - pred_noise.reshape(subtracted.shape) 
+    plt.subplot(2, 2, 1)
+    plt.imshow(subtracted[0])    
+    plt.subplot(2, 2, 2)
+    plt.imshow(subtracted[1])    
+    plt.subplot(2, 2, 3)
+    plt.imshow(subtracted[2])   
+    plt.subplot(2, 2, 4)
+    plt.imshow(subtracted[3])    
+    if i + 1 == N_STEPS or i + 1 == 2 * N_STEPS:
+      plt.show()
+    else:
+      plt.pause(0.1)
