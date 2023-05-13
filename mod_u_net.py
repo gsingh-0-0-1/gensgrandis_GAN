@@ -67,11 +67,21 @@ Creates a block to process time input given a vector
 def TimeProcBlock(n_time_steps, out_shape):
 	n_outputs = np.prod(out_shape)
 
-	inp_t = tf.keras.layers.Input(size = n_time_steps)
+	inp_t = tf.keras.layers.Input(shape = n_time_steps)
 	den = tf.keras.layers.Dense(n_outputs)(inp_t)
-	res = tf.keras.layers.Reshape(n_outputs)
+	res = tf.keras.layers.Reshape(out_shape)(den)
 
 	return inp_t, res
+
+
+'''
+
+Downscales a convolved time embedding
+
+'''
+def DownscaledTime(time_tensor, scale = 2):
+        return tf.keras.layers.Conv2D(3, 3, strides = scale, padding = 'same', activation = 'relu')(time_tensor)
+
 
 '''
 
@@ -79,23 +89,26 @@ Creates and returns a network model
 
 '''
 def network_model(im_sidelen, n_time_steps):
-	inp_i = tf.keras.layers.Input(size = (im_sidelen, im_sidelen, 3))
+	inp_i = tf.keras.layers.Input(shape = (im_sidelen, im_sidelen, 3))
 	inp_t, conv_t = TimeProcBlock(n_time_steps, (im_sidelen, im_sidelen, 3))
+
+	conv_t_050 = DownscaledTime(conv_t)
+	conv_t_025 = DownscaledTime(conv_t_050)
 
 	added_im_t = tf.keras.layers.Add()([inp_i, conv_t])
 
 	d1 = ImageDownConvBlock(added_im_t)
-	added_d1_t = tf.keras.layers.Add()([d1, conv_t])
+	added_d1_t = tf.keras.layers.Add()([d1, conv_t_050])
 	d2 = ImageDownConvBlock(added_d1_t)
-	added_d2_t = tf.keras.layers.Add()([d2, conv_t])
+	added_d2_t = tf.keras.layers.Add()([d2, conv_t_025])
 	d3 = ImageDownConvBlock(added_d2_t)
 
 	latent_conv = ImageConvBlock(d3, 5)
 
 	u3 = ImageUpConvBlock(latent_conv)
-	added_u3_t = tf.keras.layers.Add()([u3, conv_t])
+	added_u3_t = tf.keras.layers.Add()([u3, conv_t_025])
 	u2 = ImageUpConvBlock(added_u3_t)
-	added_u2_t = tf.keras.layers.Add()([u2, conv_t])
+	added_u2_t = tf.keras.layers.Add()([u2, conv_t_050])
 	u1 = ImageUpConvBlock(added_u2_t)
 
 	model = tf.keras.Model(inputs = [inp_i, inp_t], outputs = u1)
