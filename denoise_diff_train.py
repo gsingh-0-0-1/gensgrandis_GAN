@@ -22,15 +22,15 @@ import mod_u_net
 
 print(tf.__version__)
 
-print("Devices: ", [el for el in tf.config.list_physical_devices()])
+#print("Devices: ", [el for el in tf.config.list_physical_devices()])
 
 INIT_LR = 1e-4
 NOISE_DIM = 300
-TARGET_IMAGE_SIDELENGTH = 64
+TARGET_IMAGE_SIDELENGTH = 16
 
 def load_image_dataset():
 
-  TARGET_IMAGE_SIDELENGTH = 64
+  TARGET_IMAGE_SIDELENGTH = 16
 
   assert TARGET_IMAGE_SIDELENGTH % 2 == 0
 
@@ -42,10 +42,14 @@ def load_image_dataset():
 
   final = []
 
-  for img in train_images[:50]:
+  for img in train_images[:5]:
     for i in range(int(1000 / TARGET_IMAGE_SIDELENGTH)):
       for j in range(int(1000 / TARGET_IMAGE_SIDELENGTH)):
-        final.append(img[TARGET_IMAGE_SIDELENGTH * i : TARGET_IMAGE_SIDELENGTH * (i + 1), TARGET_IMAGE_SIDELENGTH * j : TARGET_IMAGE_SIDELENGTH * (j + 1)])
+        new = img[TARGET_IMAGE_SIDELENGTH * i : TARGET_IMAGE_SIDELENGTH * (i + 1), TARGET_IMAGE_SIDELENGTH * j : TARGET_IMAGE_SIDELENGTH * (j + 1)]
+        #we don't want monochrome (all-green, in this case) images
+        if new[:, :, 1].std() < 10:
+          continue
+        final.append(new)
 
   train_images = final
 
@@ -67,7 +71,7 @@ def load_image_dataset():
 
 
 
-N_STEPS = 15
+N_STEPS = 3
 
 train_dataset = load_image_dataset()
 #train_dataset = add_noise_to_dataset(train_dataset, N_STEPS)
@@ -109,24 +113,22 @@ def custom_sigmoid(x):
   return (K.sigmoid(x) - 0.5) * (2 / N_STEPS)
 
 
-model = mod_u_net.network_model(TARGET_IMAGE_SIDELENGTH, N_STEPS)
-
 #p = 1 is linear
 #p = 2 creates a quarter-circle pattern
 def power_pattern_noise(i, n, p = 1):
   frac = i / n
-  return 1 - ( (1 - (frac ** 4)) ** (1 / 4))
+  return 1 - ( (1 - (frac ** p)) ** (1 / p))
 
 def sqrt_noise(i, n):
   return (i / n) ** (1 / 2)
 
 def noise_add_frac(i, n):
-  p = 2
+  p = 1
   return power_pattern_noise(i, n, p) - power_pattern_noise(i - 1, n, p)
 
 #atexit.register(model.save, "/content/drive/My Drive/GG_train_data/saved_model")
 
-selected_train_dataset = train_dataset[:100]
+selected_train_dataset = train_dataset
 noisy = selected_train_dataset
 one = noisy
 
@@ -157,7 +159,6 @@ images = np.concatenate(tuple(images), axis = 0)
 noises = np.concatenate(tuple(noises), axis = 0)
 times = np.concatenate(tuple(times), axis = 0)
 
-
 #shuffle these up so training and validation splits
 #don't have bias
 inds = np.random.permutation(images.shape[0])
@@ -180,34 +181,63 @@ splitpoint = int(n_total * training_frac)
 
 print("Data shapes", images.shape, noises.shape, times.shape)
 
-mirrored_strategy = tf.distribute.MirroredStrategy(devices = ['/gpu:0', '/gpu:1'])
+#strategy = tf.distribute.experimental.CentralStorageStrategy()
 
-cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath = 'model_training/cp.ckpt',
-                                                 save_weights_only = False,
-                                                 verbose = 0)
+class CustomSaver(keras.callbacks.Callback):
+  def on_epoch_end(self, epoch, logs={}):
+    if epoch % 100 == 0:
+      self.model.save("model_{}.hd5".format(epoch))
 
-model.fit([images[:splitpoint], times[:splitpoint]], noises[:splitpoint],
-        validation_data = ([images[splitpoint:], times[splitpoint:]], noises[splitpoint:]),
-    batch_size = 2,
-    epochs = 1000,
-    shuffle = True)#callbacks = [cp_callback])
+def scheduler(epoch, lr):
+  if epoch < 10:
+    return lr
+  if lr < 1e-5:
+    return lr
+  else:
+    return lr * 0.97
+  
+callback = tf.keras.callbacks.LearningRateScheduler(scheduler)
+
+with tf.device('/gpu:0'):
+  model = mod_u_net.network_model(TARGET_IMAGE_SIDELENGTH, N_STEPS)
+
+  train = tf.data.Dataset.from_tensor_slices(({'input_1' : images[:splitpoint], 'input_2' : times[:splitpoint]}, noises[:splitpoint])).shuffle(1000)
+  valid = tf.data.Dataset.from_tensor_slices(({'input_1' : images[splitpoint:], 'input_2' : times[splitpoint:]}, noises[splitpoint:])).shuffle(1000)
+
+  n_rep = 5
+  n_e_per_rep = 40
+  offset = 4
+  for i in range(n_rep):
+    model.fit(train.batch(2 ** (i + offset)), validation_data = valid.batch(2 ** (n_rep + offset - 1)), epochs = n_e_per_rep * (i + 1), initial_epoch = n_e_per_rep * i, shuffle = True, callbacks = [callback])
 
 def generate_test_images(reps):
   noise = np.random.random(size = (4, TARGET_IMAGE_SIDELENGTH, TARGET_IMAGE_SIDELENGTH, 3))
   subtracted = noise
+  one = random.randint(0, 1000)
+  two = random.randint(0, 1000)
+  thr = random.randint(0, 1000)
+  fou = random.randint(0, 1000)
   for i in range(reps):
     plt.clf()
     plt.suptitle("Step %d of %d" % (i + 1, N_STEPS))
-    pred_noise = model.predict([subtracted, np.array([gen_time_matrix(min(i, N_STEPS - 1), N_STEPS) for n in range(4)])])
+    pred_noise = model.predict([subtracted, np.array([gen_time_matrix(min(i, N_STEPS - 1), N_STEPS) for j in range(4)])])
     subtracted = subtracted - pred_noise 
-    plt.subplot(2, 2, 1)
+    plt.subplot(2, 4, 1)
     plt.imshow(subtracted[0])    
-    plt.subplot(2, 2, 2)
+    plt.subplot(2, 4, 2)
     plt.imshow(subtracted[1])    
-    plt.subplot(2, 2, 3)
+    plt.subplot(2, 4, 3)
     plt.imshow(subtracted[2])   
-    plt.subplot(2, 2, 4)
-    plt.imshow(subtracted[3])    
+    plt.subplot(2, 4, 4)
+    plt.imshow(subtracted[3])
+    plt.subplot(2, 4, 5)
+    plt.imshow(train_dataset[one])    
+    plt.subplot(2, 4, 6)
+    plt.imshow(train_dataset[two])
+    plt.subplot(2, 4, 7)
+    plt.imshow(train_dataset[thr])   
+    plt.subplot(2, 4, 8)
+    plt.imshow(train_dataset[fou])
     if (i + 1) % N_STEPS == 0:
       plt.show()
     else:
